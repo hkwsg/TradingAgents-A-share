@@ -142,8 +142,7 @@ def main():
         console.print(table)
 
         # ---- 保存报告 ----
-        desktop = Path(os.environ["USERPROFILE"]) / "Desktop"
-        report_dir = desktop / f"TradingAgent报告_{ticker}_{trade_date}"
+        report_dir = Path(__file__).parent / "reports" / f"{ticker}_{trade_date}"
         report_path = save_report_to_disk(final_state, ticker, report_dir)
         console.print(f"\n[green]报告已保存:[/green] {report_path}")
 

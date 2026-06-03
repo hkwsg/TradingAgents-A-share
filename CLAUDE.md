@@ -49,8 +49,13 @@ A 股 + 港股双市场 AI 投资分析系统。基于 LangGraph 多 Agent 辩�
 - `model_catalog.py` — 所有 provider 的模型列表
 - `openai_client.py` — OpenAI 兼容客户端（含 deepseek/xai/qwen/ollama 等 11 个 provider）
 
+## 个人关注列表
+- `.watchlist.json` — 本地文件（gitignore），结构：`{"人名": ["代码1", "代码2"]}`
+- 分析前先读取此文件，识别"我的股票""XX的股票"等自然语言
+- 用户说「跑一下我的股票」→ 遍历 `我` 的列表批量分析
+
 ## 报告输出
-- 桌面 `TradingAgent报告_<代码>_<日期>/` 目录
+- 项目内 `reports/<代码>_<日期>/` 目录（不提交 git）
 - `完整分析报告.md` + `原始数据.json`
 
 ## 常见问题

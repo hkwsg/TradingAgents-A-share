@@ -224,3 +224,6 @@ reports/
 
 # Claude Code local config
 .claude/
+
+# Local watchlist (personal stocks, do not commit)
+.watchlist.json

@@ -34,9 +34,9 @@ if len(sys.argv) < 2:
 
 TICKER = sys.argv[1].strip()
 TRADE_DATE = sys.argv[2].strip() if len(sys.argv) > 2 else date.today().isoformat()
-DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
+PROJECT_ROOT = Path(__file__).parent
 safe_name = TICKER.replace(".", "_")
-REPORT_DIR = DESKTOP / f"TradingAgent报告_{safe_name}_{TRADE_DATE}"
+REPORT_DIR = PROJECT_ROOT / "reports" / f"{safe_name}_{TRADE_DATE}"
 
 config = DEFAULT_CONFIG.copy()
 config["llm_provider"] = "deepseek"

@@ -29,7 +29,7 @@ from tradingagents.dataflows.a_share_common import get_previous_trade_date
 # ============ 配置 ============
 TICKER = "600519"        # A股代码：贵州茅台
 TRADE_DATE = get_previous_trade_date(date.today().isoformat())  # 最近一个交易日
-DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
+PROJECT_ROOT = Path(__file__).parent
 
 config = DEFAULT_CONFIG.copy()
 config["llm_provider"] = "deepseek"
@@ -98,7 +98,7 @@ try:
     print(f"\n最终决策信号: {ta.process_signal(decision)}", flush=True)
 
     # ============ 报告生成 ============
-    report_dir = DESKTOP / f"TradingAgent报告_{TICKER}_{TRADE_DATE}"
+    report_dir = PROJECT_ROOT / "reports" / f"{TICKER}_{TRADE_DATE}"
     report_dir.mkdir(exist_ok=True)
 
     sections = []
