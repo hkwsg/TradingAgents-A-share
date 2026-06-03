@@ -41,7 +41,6 @@ from tradingagents.agents.utils.agent_utils import (
     get_global_news,
     # A-share specific tools
     get_caixin_news,
-    get_xueqiu_sentiment,
     get_company_announcements,
     get_market_news,
 )
@@ -178,7 +177,6 @@ class TradingAgentsGraph:
             ]),
             "social": ToolNode([
                 get_news,
-                get_xueqiu_sentiment,
                 get_insider_transactions,
             ]),
             "news": ToolNode([
