@@ -1,10 +1,20 @@
-"""TradingAgent 单股分析 — 命令行参数版本"""
+"""TradingAgents 单股分析 — 命令行快捷版
+
+通过 .env 配置 LLM 提供商和模型，一行命令直接分析：
+
+用法:
+    py run_single.py 600519                 # 自动取最近交易日
+    py run_single.py 600519 2025-12-01      # 指定日期
+    py run_single.py 600519 --output word   # 额外生成 Word 报告
+"""
+
 import sys
 import os
 import io
 import time
 import json
-from datetime import date
+import argparse
+from datetime import date, datetime
 from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -13,143 +23,164 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-# 预初始化 py_mini_racer
-try:
-    import py_mini_racer
-    _racer = py_mini_racer.MiniRacer()
-    _racer.eval("1")
-    del _racer
-except Exception:
-    pass
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.rule import Rule
+
+console = Console()
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.dataflows.a_share_common import get_previous_trade_date
-
-# ============ 参数解析 ============
-if len(sys.argv) < 2:
-    print("用法: python run_single.py <股票代码> [交易日期]")
-    print("示例: python run_single.py 600519")
-    print("示例: python run_single.py 600519 2026-05-08")
-    sys.exit(1)
-
-TICKER = sys.argv[1].strip()
-TRADE_DATE = sys.argv[2].strip() if len(sys.argv) > 2 else get_previous_trade_date(date.today().isoformat())
-DESKTOP = Path(os.environ["USERPROFILE"]) / "Desktop"
-REPORT_DIR = DESKTOP / f"TradingAgent报告_{TICKER}_{TRADE_DATE}"
-
-config = DEFAULT_CONFIG.copy()
-config["llm_provider"] = "deepseek"
-config["deep_think_llm"] = "deepseek-v4-pro"
-config["quick_think_llm"] = "deepseek-v4-flash"
-config["output_language"] = "Chinese"
-config["selected_analysts"] = ["market", "social", "news", "fundamentals"]
-config["max_debate_rounds"] = 3
-config["max_risk_discuss_rounds"] = 1
-config["data_tools_cache_dir"] = os.path.join(
-    config["project_dir"], "local_data", "data_tools", "cache"
+from tradingagents.graph.analyst_execution import (
+    AnalystWallTimeTracker,
+    build_analyst_execution_plan,
+    sync_analyst_tracker_from_chunk,
 )
-config["data_tools_snapshot_dir"] = os.path.join(
-    config["project_dir"], "local_data", "data_tools", "snapshots"
-)
-config["local_data_dir"] = os.path.join(config["project_dir"], "local_data")
-config["market_data_dir"] = os.path.join(config["project_dir"], "local_data", "market_tools")
-config["checkpoint_enabled"] = True
-# akshare 已是默认供应商，无需额外切换
+from cli.main import save_report_to_disk  # 复用 CLI 的目录化报告保存
 
 
-# ============ 运行 ============
-print("=" * 60, flush=True)
-print(f"  TradingAgent A股分析启动", flush=True)
-print(f"  股票: {TICKER}", flush=True)
-print(f"  日期: {TRADE_DATE}", flush=True)
-print(f"  模型: {config['quick_think_llm']}", flush=True)
-print("=" * 60, flush=True)
+def main():
+    parser = argparse.ArgumentParser(description="TradingAgents A股单股分析")
+    parser.add_argument("ticker", help="股票代码，如 600519")
+    parser.add_argument("date", nargs="?", default=None,
+                        help="交易日期 YYYY-MM-DD，默认最近交易日")
+    parser.add_argument("--output", choices=["md", "word"], default="md",
+                        help="报告格式：md 或 word（需 LibreOffice/pandoc）")
+    parser.add_argument("--debate", type=int, default=None,
+                        help="辩论轮数，默认从 .env / DEFAULT_CONFIG 读取")
+    parser.add_argument("--analysts", nargs="+",
+                        choices=["market", "social", "news", "fundamentals"],
+                        help="选择分析师，默认全部四个")
+    args = parser.parse_args()
 
-try:
-    print("\n[1/3] 初始化图结构...", flush=True)
-    ta = TradingAgentsGraph(debug=False, config=config)
+    ticker = args.ticker.strip()
+    trade_date = args.date or get_previous_trade_date(date.today().isoformat())
 
-    print("[2/3] 开始分析...", flush=True)
-    start_time = time.time()
+    # ---- 配置 ----
+    config = DEFAULT_CONFIG.copy()
+    if args.debate is not None:
+        config["max_debate_rounds"] = args.debate
+        config["max_risk_discuss_rounds"] = max(1, args.debate - 1)
+    if args.analysts:
+        config["selected_analysts"] = args.analysts
 
-    final_state, decision = ta.propagate(TICKER, TRADE_DATE)
-    signal = ta.process_signal(decision)
-    elapsed = time.time() - start_time
-    print(f"\n[3/3] 分析完成，耗时 {int(elapsed//60)}分{int(elapsed%60)}秒", flush=True)
-    print(f"最终决策信号: {signal}", flush=True)
+    # ---- 启动信息 ----
+    console.print()
+    console.print(Panel.fit(
+        f"[bold]股票:[/bold] {ticker}\n"
+        f"[bold]日期:[/bold] {trade_date}\n"
+        f"[bold]LLM:[/bold] {config['llm_provider']} / {config['quick_think_llm']} (quick)  "
+        f"{config['deep_think_llm']} (deep)\n"
+        f"[bold]语言:[/bold] {config['output_language']}  "
+        f"[bold]辩论:[/bold] {config['max_debate_rounds']}轮  "
+        f"[bold]断点:[/bold] {'开' if config['checkpoint_enabled'] else '关'}",
+        title="TradingAgents A股分析",
+        border_style="green",
+    ))
 
-    # ============ 报告生成 ============
-    REPORT_DIR.mkdir(exist_ok=True)
+    try:
+        # ---- 初始化 ----
+        with console.status("[bold green]初始化分析引擎...[/bold green]"):
+            graph = TradingAgentsGraph(debug=False, config=config)
+            instrument_context = graph.resolve_instrument_context(ticker)
+            init_state = graph.propagator.create_initial_state(
+                ticker, trade_date, instrument_context=instrument_context,
+            )
+            flow_args = graph.propagator.get_graph_args()
 
-    report_map = {
-        "market_report": "市场技术分析",
-        "sentiment_report": "社交媒体情绪分析",
-        "news_report": "新闻分析",
-        "fundamentals_report": "基本面分析",
-    }
-    sections = []
-    analyst_reports = []
-    for key, title in report_map.items():
-        if final_state.get(key):
-            analyst_reports.append((title, final_state[key]))
+            # 分析师执行计划
+            selected_keys = [a for a in ["market", "social", "news", "fundamentals"]
+                             if a in graph.workflow.nodes]
+            if not selected_keys:
+                selected_keys = config.get("selected_analysts",
+                                            ["market", "social", "news", "fundamentals"])
+            exec_plan = build_analyst_execution_plan(selected_keys)
+            wall_tracker = AnalystWallTimeTracker(exec_plan)
 
-    if analyst_reports:
-        sections.append("# 一、分析师团队报告\n")
-        for title, content in analyst_reports:
-            sections.append(f"## {title}\n\n{content}\n")
+        # ---- 流式执行 ----
+        console.print(Panel("开始分析...", border_style="cyan"))
+        start_time = time.time()
+        step = 0
+        trace = []
 
-    # 研究/辩论
-    if final_state.get("investment_plan"):
-        sections.append("# 二、研究团队决策\n")
-        sections.append(final_state["investment_plan"])
-    debate = final_state.get("investment_debate_state", {})
-    if debate:
-        if debate.get("bull_history"):
-            sections.append("\n### 多头观点\n")
-            sections.append(debate["bull_history"])
-        if debate.get("bear_history"):
-            sections.append("\n### 空头观点\n")
-            sections.append(debate["bear_history"])
-        if debate.get("judge_decision"):
-            sections.append("\n### 研究经理裁决\n")
-            sections.append(debate["judge_decision"])
+        for chunk in graph.graph.stream(init_state, **flow_args):
+            step += 1
+            trace.append(chunk)
+            sync_analyst_tracker_from_chunk(wall_tracker, chunk)
 
-    if final_state.get("trader_investment_plan"):
-        sections.append("\n# 三、交易员执行计划\n")
-        sections.append(final_state["trader_investment_plan"])
+            # 提取本轮活跃节点
+            active = [k for k in chunk if k != "messages"]
+            if active:
+                elapsed = time.time() - start_time
+                console.print(f"  [dim][{int(elapsed)}s][/dim] 步骤{step}: "
+                              f"[cyan]{' → '.join(active)}[/cyan]")
 
-    if final_state.get("final_trade_decision"):
-        sections.append("\n# 四、组合经理最终决策\n")
-        sections.append(final_state["final_trade_decision"])
+        elapsed = time.time() - start_time
 
-    sections.append("\n---\n")
-    sections.append(f"**交易信号**: `{signal}`\n")
+        # 合并增量状态
+        final_state = {}
+        for c in trace:
+            final_state.update(c)
 
-    complete_report = "\n\n".join(sections)
-    report_file = REPORT_DIR / "完整分析报告.md"
-    report_file.write_text(complete_report, encoding="utf-8")
+        decision = final_state.get("final_trade_decision", "")
+        signal = graph.process_signal(decision)
 
-    print(f"\n报告已保存: {report_file}", flush=True)
+        # ---- 结果摘要 ----
+        table = Table(title="分析结果", border_style="green")
+        table.add_column("阶段", style="cyan")
+        table.add_column("结论", style="bold")
+        table.add_column("耗时", style="dim")
 
-    # JSON 原始数据
-    json_file = REPORT_DIR / "原始数据.json"
-    safe_state = {}
-    for k, v in final_state.items():
-        try:
-            json.dumps(v, ensure_ascii=False)
-            safe_state[k] = v
-        except (TypeError, ValueError):
-            safe_state[k] = str(v)[:2000]
-    json_file.write_text(json.dumps(safe_state, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"JSON: {json_file}", flush=True)
+        table.add_row("最终决策", str(signal),
+                      f"{int(elapsed // 60)}分{int(elapsed % 60)}秒")
+        table.add_row("市场分析", "✓" if final_state.get("market_report") else "✗", "")
+        table.add_row("情绪分析", "✓" if final_state.get("sentiment_report") else "✗", "")
+        table.add_row("新闻分析", "✓" if final_state.get("news_report") else "✗", "")
+        table.add_row("基本面", "✓" if final_state.get("fundamentals_report") else "✗", "")
+        console.print(table)
 
-    # 输出完成标记
-    print(f"\n=== DONE {TICKER} ===", flush=True)
+        # ---- 保存报告 ----
+        desktop = Path(os.environ["USERPROFILE"]) / "Desktop"
+        report_dir = desktop / f"TradingAgent报告_{ticker}_{trade_date}"
+        report_path = save_report_to_disk(final_state, ticker, report_dir)
+        console.print(f"\n[green]报告已保存:[/green] {report_path}")
 
-except Exception as e:
-    print(f"\n错误 {TICKER}: {e}", flush=True)
-    import traceback
-    traceback.print_exc()
-    print(f"\n=== FAILED {TICKER} ===", flush=True)
-    sys.exit(1)
+        # 原始 JSON
+        json_path = report_dir / "原始数据.json"
+        safe = {}
+        for k, v in final_state.items():
+            try:
+                json.dumps(v, ensure_ascii=False)
+                safe[k] = v
+            except (TypeError, ValueError):
+                safe[k] = str(v)[:2000]
+        json_path.write_text(json.dumps(safe, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # 分析师耗时统计
+        console.print(f"\n[dim]{wall_tracker.format_summary()}[/dim]")
+
+        # ---- Word 转换 ----
+        if args.output == "word":
+            console.print()
+            with console.status("[bold]生成 Word 报告..."):
+                try:
+                    from convert_raw_to_word import convert_markdown_to_word
+                    word_path = report_dir / "完整分析报告.docx"
+                    convert_markdown_to_word(str(report_path), str(word_path))
+                    console.print(f"[green]Word 已保存:[/green] {word_path}")
+                except Exception as e:
+                    console.print(f"[yellow]Word 转换失败: {e}[/yellow]")
+
+        console.print(f"\n[bold green]=== DONE {ticker} ===[/bold green]")
+
+    except Exception as e:
+        console.print(f"\n[red]分析失败: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
