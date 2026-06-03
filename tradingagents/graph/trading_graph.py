@@ -38,7 +38,12 @@ from tradingagents.agents.utils.agent_utils import (
     get_income_statement,
     get_news,
     get_insider_transactions,
-    get_global_news
+    get_global_news,
+    # A-share specific tools
+    get_caixin_news,
+    get_xueqiu_sentiment,
+    get_company_announcements,
+    get_market_news,
 )
 
 from .checkpointer import checkpoint_step, clear_checkpoint, get_checkpointer, thread_id
@@ -165,39 +170,31 @@ class TradingAgentsGraph:
         return kwargs
 
     def _create_tool_nodes(self) -> Dict[str, ToolNode]:
-        """Create tool nodes for different data sources using abstract methods."""
+        """Create tool nodes with A-share specific data sources."""
         return {
-            "market": ToolNode(
-                [
-                    # Core stock data tools
-                    get_stock_data,
-                    # Technical indicators
-                    get_indicators,
-                ]
-            ),
-            "social": ToolNode(
-                [
-                    # News tools for social media analysis
-                    get_news,
-                ]
-            ),
-            "news": ToolNode(
-                [
-                    # News and insider information
-                    get_news,
-                    get_global_news,
-                    get_insider_transactions,
-                ]
-            ),
-            "fundamentals": ToolNode(
-                [
-                    # Fundamental analysis tools
-                    get_fundamentals,
-                    get_balance_sheet,
-                    get_cashflow,
-                    get_income_statement,
-                ]
-            ),
+            "market": ToolNode([
+                get_stock_data,
+                get_indicators,
+            ]),
+            "social": ToolNode([
+                get_news,
+                get_xueqiu_sentiment,
+                get_insider_transactions,
+            ]),
+            "news": ToolNode([
+                get_news,
+                get_global_news,
+                get_insider_transactions,
+                get_caixin_news,
+                get_company_announcements,
+                get_market_news,
+            ]),
+            "fundamentals": ToolNode([
+                get_fundamentals,
+                get_balance_sheet,
+                get_cashflow,
+                get_income_statement,
+            ]),
         }
 
     def _resolve_benchmark(self, ticker: str) -> str:

@@ -21,7 +21,12 @@ from tradingagents.agents.utils.fundamental_data_tools import (
 from tradingagents.agents.utils.news_data_tools import (
     get_news,
     get_insider_transactions,
-    get_global_news
+    get_global_news,
+    # A-share specific tools
+    get_caixin_news,
+    get_xueqiu_sentiment,
+    get_company_announcements,
+    get_market_news,
 )
 from tradingagents.agents.utils.market_data_validation_tools import (
     get_verified_market_snapshot

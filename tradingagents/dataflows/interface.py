@@ -1,6 +1,4 @@
-from typing import Annotated
-
-# Import from vendor-specific modules
+# Vendor imports
 from .y_finance import (
     get_YFin_data_online,
     get_stock_stats_indicators_window,
@@ -23,125 +21,137 @@ from .alpha_vantage import (
     get_global_news as get_alpha_vantage_global_news,
 )
 from .alpha_vantage_common import AlphaVantageRateLimitError
-from .symbol_utils import NoMarketDataError
 
-# Configuration and routing logic
+# A-share data sources (akshare)
+from .a_share import (
+    get_stock_data as get_akshare_stock_data,
+    get_indicators as get_akshare_indicators,
+    get_fundamentals as get_akshare_fundamentals,
+    get_balance_sheet as get_akshare_balance_sheet,
+    get_cashflow as get_akshare_cashflow,
+    get_income_statement as get_akshare_income_statement,
+    get_news as get_akshare_news,
+    get_market_news as get_akshare_market_news,
+    get_caixin_news as get_akshare_caixin_news,
+    get_xueqiu_sentiment as get_akshare_xueqiu_sentiment,
+    get_company_announcements as get_akshare_company_announcements,
+    get_insider_transactions as get_akshare_insider_transactions,
+)
+
+from .symbol_utils import NoMarketDataError
 from .config import get_config
 
-# Tools organized by category
 TOOLS_CATEGORIES = {
     "core_stock_apis": {
         "description": "OHLCV stock price data",
-        "tools": [
-            "get_stock_data"
-        ]
+        "tools": ["get_stock_data"],
     },
     "technical_indicators": {
         "description": "Technical analysis indicators",
-        "tools": [
-            "get_indicators"
-        ]
+        "tools": ["get_indicators"],
     },
     "fundamental_data": {
         "description": "Company fundamentals",
-        "tools": [
-            "get_fundamentals",
-            "get_balance_sheet",
-            "get_cashflow",
-            "get_income_statement"
-        ]
+        "tools": ["get_fundamentals", "get_balance_sheet", "get_cashflow", "get_income_statement"],
     },
     "news_data": {
-        "description": "News and insider data",
+        "description": "News, social sentiment, insider data, and announcements",
         "tools": [
-            "get_news",
-            "get_global_news",
-            "get_insider_transactions",
-        ]
-    }
+            "get_news", "get_global_news", "get_insider_transactions",
+            "get_market_news", "get_company_announcements",
+            "get_xueqiu_sentiment", "get_caixin_news",
+        ],
+    },
 }
 
-VENDOR_LIST = [
-    "yfinance",
-    "alpha_vantage",
-]
+VENDOR_LIST = ["akshare", "yfinance", "alpha_vantage"]
 
-# Mapping of methods to their vendor-specific implementations
 VENDOR_METHODS = {
-    # core_stock_apis
     "get_stock_data": {
+        "akshare": get_akshare_stock_data,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
-    # technical_indicators
     "get_indicators": {
+        "akshare": get_akshare_indicators,
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
     },
-    # fundamental_data
     "get_fundamentals": {
+        "akshare": get_akshare_fundamentals,
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "yfinance": get_yfinance_fundamentals,
     },
     "get_balance_sheet": {
+        "akshare": get_akshare_balance_sheet,
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
     },
     "get_cashflow": {
+        "akshare": get_akshare_cashflow,
         "alpha_vantage": get_alpha_vantage_cashflow,
         "yfinance": get_yfinance_cashflow,
     },
     "get_income_statement": {
+        "akshare": get_akshare_income_statement,
         "alpha_vantage": get_alpha_vantage_income_statement,
         "yfinance": get_yfinance_income_statement,
     },
-    # news_data
     "get_news": {
+        "akshare": get_akshare_news,
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
     },
     "get_global_news": {
+        "akshare": get_akshare_market_news,
         "yfinance": get_global_news_yfinance,
         "alpha_vantage": get_alpha_vantage_global_news,
     },
     "get_insider_transactions": {
+        "akshare": get_akshare_insider_transactions,
         "alpha_vantage": get_alpha_vantage_insider_transactions,
         "yfinance": get_yfinance_insider_transactions,
     },
+    # A-share-only tools
+    "get_market_news": {
+        "akshare": get_akshare_market_news,
+    },
+    "get_company_announcements": {
+        "akshare": get_akshare_company_announcements,
+    },
+    "get_xueqiu_sentiment": {
+        "akshare": get_akshare_xueqiu_sentiment,
+    },
+    "get_caixin_news": {
+        "akshare": get_akshare_caixin_news,
+    },
 }
 
+
 def get_category_for_method(method: str) -> str:
-    """Get the category that contains the specified method."""
     for category, info in TOOLS_CATEGORIES.items():
         if method in info["tools"]:
             return category
     raise ValueError(f"Method '{method}' not found in any category")
 
-def get_vendor(category: str, method: str = None) -> str:
-    """Get the configured vendor for a data category or specific tool method.
-    Tool-level configuration takes precedence over category-level.
-    """
-    config = get_config()
 
-    # Check tool-level configuration first (if method provided)
+def get_vendor(category: str, method: str = None) -> str:
+    config = get_config()
     if method:
         tool_vendors = config.get("tool_vendors", {})
         if method in tool_vendors:
             return tool_vendors[method]
+    return config.get("data_vendors", {}).get(category, "akshare")
 
-    # Fall back to category-level configuration
-    return config.get("data_vendors", {}).get(category, "default")
 
 def route_to_vendor(method: str, *args, **kwargs):
-    """Route method calls to appropriate vendor implementation with fallback support."""
     category = get_category_for_method(method)
     vendor_config = get_vendor(category, method)
-    primary_vendors = [v.strip() for v in vendor_config.split(',')]
+    primary_vendors = [v.strip() for v in vendor_config.split(",")]
 
     if method not in VENDOR_METHODS:
         raise ValueError(f"Method '{method}' not supported")
 
-    # Build fallback chain: primary vendors first, then remaining available vendors
     all_available_vendors = list(VENDOR_METHODS[method].keys())
     fallback_vendors = primary_vendors.copy()
     for vendor in all_available_vendors:
@@ -153,30 +163,19 @@ def route_to_vendor(method: str, *args, **kwargs):
     for vendor in fallback_vendors:
         if vendor not in VENDOR_METHODS[method]:
             continue
-
-        vendor_impl = VENDOR_METHODS[method][vendor]
-        impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
-
+        impl = VENDOR_METHODS[method][vendor]
         try:
-            return impl_func(*args, **kwargs)
+            return impl(*args, **kwargs)
         except AlphaVantageRateLimitError:
-            continue  # Rate limits: try the next vendor
+            continue
         except NoMarketDataError as e:
-            last_no_data = e  # No data here; another vendor may have it
+            last_no_data = e
             continue
         except Exception as e:
-            # A fallback vendor failing for an incidental reason (e.g. no API
-            # key configured) must not crash the call when another vendor
-            # already determined the symbol simply has no data. Remember the
-            # first error so a genuine primary-vendor failure still surfaces.
             if first_error is None:
                 first_error = e
             continue
 
-    # If any vendor reported "no data", the symbol is genuinely unavailable.
-    # Return one explicit, instructive sentinel rather than a vendor-specific
-    # empty string, so the agent reports "unavailable" instead of inventing a
-    # value. This takes precedence over incidental fallback errors.
     if last_no_data is not None:
         sym = last_no_data.symbol
         canonical = last_no_data.canonical
@@ -184,12 +183,9 @@ def route_to_vendor(method: str, *args, **kwargs):
         return (
             f"NO_DATA_AVAILABLE: No market data found for '{sym}'{resolved} from "
             f"any configured vendor. The symbol may be invalid, delisted, or not "
-            f"covered by Yahoo Finance / Alpha Vantage. Do not estimate or "
-            f"fabricate values — report that data is unavailable for this symbol."
+            f"covered by available vendors. Do not estimate or fabricate values."
         )
 
-    # No vendor returned data and none reported clean "no data" — surface the
-    # first real error (e.g. the primary vendor's network failure).
     if first_error is not None:
         raise first_error
 

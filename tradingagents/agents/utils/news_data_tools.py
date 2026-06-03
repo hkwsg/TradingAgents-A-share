@@ -55,3 +55,41 @@ def get_insider_transactions(
         str: A report of insider transaction data
     """
     return route_to_vendor("get_insider_transactions", ticker)
+
+
+@tool
+def get_market_news(
+    curr_date: Annotated[str, "Current date in yyyy-mm-dd format"],
+    look_back_days: Annotated[int, "Number of days to look back"] = 7,
+    limit: Annotated[int, "Maximum number of market news items to return"] = 10,
+) -> str:
+    """Retrieve A-share market-wide, policy and macro news."""
+    return route_to_vendor("get_market_news", curr_date=curr_date, look_back_days=look_back_days, limit=limit)
+
+
+@tool
+def get_company_announcements(
+    ticker: Annotated[str, "ticker symbol"],
+    start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
+    end_date: Annotated[str, "End date in yyyy-mm-dd format"],
+    category: Annotated[str, "Announcement category"] = "全部",
+) -> str:
+    """Retrieve A-share company announcements for a given ticker and date range."""
+    return route_to_vendor("get_company_announcements", ticker=ticker, start_date=start_date, end_date=end_date, category=category)
+
+
+@tool
+def get_xueqiu_sentiment(
+    ticker: Annotated[str, "Ticker symbol"],
+) -> str:
+    """Retrieve A-share Xueqiu retail sentiment data (followers, ranking, sentiment)."""
+    return route_to_vendor("get_xueqiu_sentiment", ticker=ticker)
+
+
+@tool
+def get_caixin_news(
+    ticker: Annotated[str, "Ticker symbol"],
+    limit: Annotated[int, "Maximum number of news items"] = 10,
+) -> str:
+    """Retrieve Caixin professional media news related to the given ticker."""
+    return route_to_vendor("get_caixin_news", ticker=ticker, limit=limit)
