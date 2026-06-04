@@ -199,7 +199,14 @@ SIGNAL_EMOJI = {
 def _extract_first(pattern: str, text: str, default: str = "数据未提取") -> str:
     """从文本中提取第一个正则匹配，失败返回 default。"""
     m = re.search(pattern, text)
-    return m.group(1).strip() if m else default
+    if not m:
+        return default
+    try:
+        return m.group(1).strip()
+    except IndexError:
+        # 正则没有捕获组时，返回整体匹配
+        return m.group(0).strip()
+
 
 
 def _extract_support_resistance(market_text: str) -> tuple[str, str]:
