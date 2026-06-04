@@ -1,15 +1,18 @@
-"""TradingAgents 批量分析 — 串行跑 .watchlist.json 中所有股票
+"""TradingAgents 批量分析 — 交错启动并行模式（规避 akshare 连接锁）
 
 用法:
-    py run_batch.py                  # 分析"我"的所有股票（A股用run_single.py，港股用run_hk.py）
+    py run_batch.py                  # 分析"我"的所有股票
     py run_batch.py --market A       # 仅A股
     py run_batch.py --market HK      # 仅港股
-    py run_batch.py --person 我      # 指定人物（默认"我"）
+    py run_batch.py --person 我      # 指定人物
     py run_batch.py --tickers 600519,600036   # 直接指定代码列表
+    py run_batch.py --parallel       # 并发模式（每只间隔10秒启动）
+    py run_batch.py --serial         # 串行模式（默认，最安全）
 """
 import os, sys, io, json, time, argparse, subprocess
 from datetime import date
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
@@ -33,7 +36,7 @@ def is_hk(ticker):
     return ".HK" in ticker.upper()
 
 
-def run_one(ticker, market_date=None):
+def run_one(ticker, market_date=None, quiet=False):
     """运行单只股票分析，返回(成功, 耗时秒)"""
     env = os.environ.copy()
     env["PYMINIRACER_V8_SINGLE_THREAD"] = "1"
@@ -44,18 +47,23 @@ def run_one(ticker, market_date=None):
     if market_date:
         cmd.append(market_date)
 
-    print(f"\n{'='*60}")
-    print(f"  开始分析: {ticker}  ({'港股' if is_hk(ticker) else 'A股'})")
-    print(f"  命令: {' '.join(cmd)}")
-    print(f"{'='*60}")
+    if not quiet:
+        print(f"\n{'='*60}")
+        print(f"  开始分析: {ticker}  ({'港股' if is_hk(ticker) else 'A股'})")
+        print(f"  命令: {' '.join(cmd)}")
+        print(f"{'='*60}")
 
     t0 = time.time()
     try:
-        result = subprocess.run(cmd, cwd=str(PROJ), env=env, capture_output=False, timeout=1800)
+        stdout_target = subprocess.PIPE if quiet else None
+        stderr_target = subprocess.PIPE if quiet else None
+        result = subprocess.run(cmd, cwd=str(PROJ), env=env,
+                                capture_output=quiet, timeout=1800)
         elapsed = time.time() - t0
         ok = result.returncode == 0
-        status = "✅ 成功" if ok else f"❌ 失败 (exit={result.returncode})"
-        print(f"\n  {ticker} 完成: {status} | 耗时: {elapsed/60:.1f} 分钟")
+        if not quiet:
+            status = "✅ 成功" if ok else f"❌ 失败 (exit={result.returncode})"
+            print(f"\n  {ticker} 完成: {status} | 耗时: {elapsed/60:.1f} 分钟")
         return ok, elapsed
     except subprocess.TimeoutExpired:
         elapsed = time.time() - t0
@@ -146,6 +154,10 @@ def main():
     parser.add_argument("--person", default="我", help="关注列表中的人物（默认'我'）")
     parser.add_argument("--tickers", help="直接指定代码列表，逗号分隔（如 600519,600036）")
     parser.add_argument("--date", default=None, help="交易日期 YYYY-MM-DD")
+    parser.add_argument("--parallel", action="store_true", default=False,
+                        help="并发模式：每只间隔10秒启动")
+    parser.add_argument("--serial", action="store_true", default=False,
+                        help="串行模式（默认）")
     args = parser.parse_args()
 
     # 确定股票列表
@@ -172,14 +184,32 @@ def main():
         return
 
     print(f"📊 批量分析启动 | {len(tickers)} 只股票 | 市场: {args.market or '全部'}")
-    print(f"   列表: {', '.join(tickers)}")
-    print(f"   模式: 串行（akshare连接池限制）\n")
+    parallel = args.parallel and not args.serial
+    print(f"   模式: {'交错并发（间隔10s）' if parallel else '串行（最安全）'}")
+    print(f"   列表: {', '.join(tickers)}\n")
 
     results = []
     t_start = time.time()
-    for ticker in tickers:
-        ok, elapsed = run_one(ticker, args.date)
-        results.append((ticker, ok, elapsed))
+
+    if parallel:
+        # 交错启动：用线程池并行启动子进程，每只间隔 10 秒错开 akshare 锁
+        future_map = {}
+        with ThreadPoolExecutor(max_workers=len(tickers)) as executor:
+            for i, ticker in enumerate(tickers):
+                if i > 0:
+                    print(f"   间隔 10 秒后启动 {ticker}...")
+                    time.sleep(10)
+                future = executor.submit(run_one, ticker, args.date, quiet=(i > 0))
+                future_map[future] = ticker
+
+            for future in as_completed(future_map):
+                ticker = future_map[future]
+                ok, elapsed = future.result()
+                results.append((ticker, ok, elapsed))
+    else:
+        for ticker in tickers:
+            ok, elapsed = run_one(ticker, args.date)
+            results.append((ticker, ok, elapsed))
 
     total = time.time() - t_start
     print(f"\n{'='*60}")
