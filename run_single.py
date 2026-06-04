@@ -8,6 +8,10 @@
     py run_single.py 600519 --output word   # 额外生成 Word 报告
 """
 
+import os
+os.environ.setdefault("PYMINIRACER_V8_SINGLE_THREAD", "1")
+os.environ.setdefault("PYMINIRACER_DISABLE_CONFIGURE_POOL", "1")
+
 import sys
 import os
 import io
@@ -53,6 +57,8 @@ def main():
     parser.add_argument("--analysts", nargs="+",
                         choices=["market", "social", "news", "fundamentals"],
                         help="选择分析师，默认全部四个")
+    parser.add_argument("--no-push", action="store_true",
+                        help="禁用飞书推送")
     args = parser.parse_args()
 
     ticker = args.ticker.strip()
@@ -160,6 +166,21 @@ def main():
         # 分析师耗时统计
         console.print(f"\n[dim]{wall_tracker.format_summary()}[/dim]")
 
+        # 精简结果输出
+        if config.get("output_language", "").lower() in ("chinese", "中文"):
+            from cli.report_formatter import format_condensed_result
+            condensed = format_condensed_result(final_state, elapsed, ticker, config)
+            console.print(f"\n{condensed}")
+
+        # ---- 飞书推送 ----
+        if not args.no_push:
+            try:
+                from cli.feishu_push import push_analysis_result, push_start_notification
+                push_start_notification(ticker)
+                push_analysis_result(final_state, elapsed, ticker, config)
+            except Exception as e:
+                console.print(f"[yellow]飞书推送失败（不影响分析结果）: {e}[/yellow]")
+
         # ---- Word 转换 ----
         if args.output == "word":
             console.print()
@@ -172,7 +193,7 @@ def main():
                 except Exception as e:
                     console.print(f"[yellow]Word 转换失败: {e}[/yellow]")
 
-        console.print(f"\n[bold green]=== DONE {ticker} ===[/bold green]")
+        console.print(f"\n[bold green]=== DONE {ticker} ===[/bold green]\n")
 
     except Exception as e:
         console.print(f"\n[red]分析失败: {e}[/red]")

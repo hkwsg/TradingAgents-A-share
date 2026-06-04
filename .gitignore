@@ -227,3 +227,6 @@ reports/
 
 # Local watchlist (personal stocks, do not commit)
 .watchlist.json
+
+# Personal local overrides (do not commit)
+CLAUDE.local.md

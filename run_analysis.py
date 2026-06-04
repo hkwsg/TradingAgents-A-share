@@ -1,6 +1,9 @@
 """TradingAgent A股分析脚本 — 监控运行 + 报告输出到桌面"""
-import sys
 import os
+os.environ.setdefault("PYMINIRACER_V8_SINGLE_THREAD", "1")
+os.environ.setdefault("PYMINIRACER_DISABLE_CONFIGURE_POOL", "1")
+
+import sys
 import io
 import time
 import json

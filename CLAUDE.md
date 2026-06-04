@@ -1,66 +1,58 @@
-# TradingAgents-A-share
+# TradingAgents-A-share · Claude Code 专属指令
 
-## 项目定位
-A 股 + 港股双市场 AI 投资分析系统。基于 LangGraph 多 Agent 辩论框架（12 个 Agent），A 股走 akshare 数据管道，港股走 yfinance 数据管道。
+通用项目约定见 `@AGENTS.md`。本文件仅包含 Claude Code 特有的行为指令和补充规则。
 
-## 启动命令
-- A股：`py run_single.py <6位代码> [日期]`
-- 港股：`py run_hk.py <代码.HK> [日期]`
-- 示例：`py run_single.py 000012 2026-05-22`
-- 示例：`py run_hk.py 1258.HK 2026-05-22`
+## 硬性约束
+- 永远不修改 `tradingagents/` 核心框架代码（agent层/编排层/LLM客户端），除非用户明确要求
+- 分析报告仅输出到 `reports/` 目录，不得覆盖历史报告
+- 用户说「跑一下我的股票」→ 先读 `.watchlist.json`，确认列表后再批量跑
+- API Key 在 `.env`，永远不打印、不提交、不写入报告
 
-## 环境
-- Python：`py`（3.12.3），依赖见 `pyproject.toml`
-- 模型：DeepSeek V4 Pro（深度思考）+ V4 Flash（快速响应）
-- API Key：`.env` 中 `DEEPSEEK_API_KEY`
-- 中文字体：`C:\Windows\Fonts\simhei.ttf`（黑体）、`simfang.ttf`（仿宋）、`simkai.ttf`（楷体）
+## 启动命令（环境变量是 Windows + akshare 的命门）
+```bash
+PYMINIRACER_V8_SINGLE_THREAD=1 PYMINIRACER_DISABLE_CONFIGURE_POOL=1 .venv/Scripts/python.exe run_single.py <代码> [日期]
+```
+**必须在 shell 层面设置**这两个 env var，放 Python 代码里 `os.environ.setdefault` 来不及。
 
-## 关键文件索引
+## Claude Code 专属能力
+- 遇到分析报错 → 先 grep 日志里的关键字，再查 `经验/` 目录（如果存在）
+- 批量跑多只股票 → 每只独立 SQLite checkpoint，可并行但建议串行（akshare 连接池有限）
+- 要对比多个分析结果 → 直接读 `reports/<代码>/完整分析报告.md`，用 subagent 并行提取关键数据
 
-### 入口脚本
-- `run_single.py` — A股单股分析入口（argparse + Rich UI）
-- `run_hk.py` — 港股分析入口
-- `main.py` — 快速冒烟测试（NVDA 硬编码，仅验证流程）
+## 按需加载规则
+`.claude/rules/` 目录按文件路径自动匹配加载：
+- `analysis-execution.md` → 操作入口脚本时加载
+- `agent-framework.md` → 操作 `tradingagents/` 核心代码时加载
+- `report-output.md` → 操作 `reports/`、`cli/` 时加载
 
-### 数据层 `tradingagents/dataflows/`
-- `interface.py` — Vendor 路由注册（akshare/yfinance/alpha_vantage）
-- `a_share.py` — A股数据实现（akshare，约 2000 行）
-- `a_share_common.py` — A股工具函数（代码标准化、交易日历）
-- `y_finance.py` — 港股/美股数据实现
-- `config.py` — 运行时配置单例
+每个规则文件从空开始，同个问题被纠正 2 次后自动填充。
 
-### Agent 层 `tradingagents/agents/`
-- `analysts/` — 4 个分析师（market/sentiment/news/fundamentals）
-- `researchers/` — 多空辩论研究员（bull/bear）
-- `managers/` — 研究经理 + 投资组合经理
-- `trader/` — 交易执行计划
-- `risk_mgmt/` — 三人风控（aggressive/conservative/neutral）
-- `utils/rating.py` — 信号解析（中英文评级词）
-- `utils/structured.py` — 结构化输出 fallback
+## 批量分析
+- `run_batch.py` — 读取 `.watchlist.json` 串行跑所有股票
+  - 用法：`PYMINIRACER_V8_SINGLE_THREAD=1 PYMINIRACER_DISABLE_CONFIGURE_POOL=1 .venv/Scripts/python.exe run_batch.py`
+  - `--market A` 仅A股，`--market HK` 仅港股
+  - `--person 张三` 指定人物，`--tickers 600519,600036` 手动指定
+  - 完成后生成 `reports/批量分析_<日期>.md` 汇总简报
 
-### 编排层 `tradingagents/graph/`
-- `trading_graph.py` — TradingAgentsGraph 总调度
-- `setup.py` — LangGraph StateGraph 构建
-- `conditional_logic.py` — 辩论/风控轮次控制
-- `reflection.py` — 事后反思与记忆
+## 定时任务（CronCreate 模板）
 
-### LLM 客户端 `tradingagents/llm_clients/`
-- `factory.py` — LLM 客户端工厂
-- `model_catalog.py` — 所有 provider 的模型列表
-- `openai_client.py` — OpenAI 兼容客户端（含 deepseek/xai/qwen/ollama 等 11 个 provider）
+用户说「开启定时分析」时，按以下模板创建：
 
-## 个人关注列表
-- `.watchlist.json` — 本地文件（gitignore），结构：`{"人名": ["代码1", "代码2"]}`
-- 分析前先读取此文件，识别"我的股票""XX的股票"等自然语言
-- 用户说「跑一下我的股票」→ 遍历 `我` 的列表批量分析
+```bash
+# 交易日开盘后 上午9:10 自动跑关注列表
+CronCreate("10 9 * * 1-5", "切换到 TradingAgents-A-share 项目。读取 .watchlist.json 中「我」的列表，串行运行 run_batch.py 分析所有A股。命令：PYMINIRACER_V8_SINGLE_THREAD=1 PYMINIRACER_DISABLE_CONFIGURE_POOL=1 .venv/Scripts/python.exe run_batch.py --market A")
 
-## 报告输出
-- 项目内 `reports/<代码>_<日期>/` 目录（不提交 git）
-- `完整分析报告.md` + `原始数据.json`
+# 交易日收盘后 下午3:30 汇总当日简报
+CronCreate("30 15 * * 1-5", "切换到 TradingAgents-A-share 项目。扫描今天 reports/ 目录所有生成的分析报告，提取每只股票的关键结论（操作建议、PE/PB、ROE），汇总为一份当日简报写入 reports/每日简报/<日期>.md。")
+```
 
-## 常见问题
-- **技术指标 N/A**：次新股数据不足，指标无法计算，正常现象
-- **Structured output warning**：DeepSeek 偶尔返回 None，自动 fallback 到自由文本
-- **yfinance 尝试 A 股下载**：预期行为，已被 akshare fallback 兜住
-- **Reddit/StockTwits 404/403**：海外源对 A/港股无覆盖，不影响结果
-- **单次分析耗时**：约 10-15 分钟，消耗约 50-100 万 input tokens
+用户说「停止定时分析」时删除所有相关 CronCreate。
+
+## 离线兜底
+使用 Windows 计划任务 + `scheduled_run.sh`：
+```bash
+schtasks /create /tn "TradingAgentsDaily" /tr "bash /c/Users/86155/Desktop/claude项目文件/TradingAgents-A-share/scheduled_run.sh" /sc daily /st 09:10
+```
+
+## 项目记忆
+- `~/.claude/projects/.../memory/tradingagents-project-setup.md` — 上次会话的状态快照

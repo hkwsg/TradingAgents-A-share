@@ -1,6 +1,9 @@
 """TradingAgent 港股分析 — 走 yfinance 数据管道"""
-import sys
 import os
+os.environ.setdefault("PYMINIRACER_V8_SINGLE_THREAD", "1")
+os.environ.setdefault("PYMINIRACER_DISABLE_CONFIGURE_POOL", "1")
+
+import sys
 import io
 import time
 import json
@@ -170,6 +173,12 @@ try:
             safe_state[k] = str(v)[:2000]
     json_file.write_text(json.dumps(safe_state, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"JSON: {json_file}", flush=True)
+
+    # 精简结果输出
+    if config.get("output_language", "").lower() in ("chinese", "中文"):
+        from cli.report_formatter import format_condensed_result
+        condensed = format_condensed_result(final_state, elapsed, TICKER, config)
+        print(f"\n{condensed}", flush=True)
 
     print(f"\n=== DONE {TICKER} ===", flush=True)
 
