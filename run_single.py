@@ -36,12 +36,10 @@ console = Console()
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.graph.stage_timer import StageTimer
+from tradingagents.graph.perf_callbacks import PerfCallbacks
 from tradingagents.dataflows.a_share_common import get_previous_trade_date
-from tradingagents.graph.analyst_execution import (
-    AnalystWallTimeTracker,
-    build_analyst_execution_plan,
-    sync_analyst_tracker_from_chunk,
-)
+from tradingagents.graph.analyst_execution import build_analyst_execution_plan
 from cli.main import save_report_to_disk  # 复用 CLI 的目录化报告保存
 
 
@@ -57,6 +55,8 @@ def main():
     parser.add_argument("--analysts", nargs="+",
                         choices=["market", "social", "news", "fundamentals"],
                         help="选择分析师，默认全部四个")
+    parser.add_argument("--perf", action="store_true",
+                        help="启用深度耗时追踪（LLM vs 工具调用拆分）")
     parser.add_argument("--no-push", action="store_true",
                         help="禁用飞书推送")
     args = parser.parse_args()
@@ -103,7 +103,10 @@ def main():
                 selected_keys = config.get("selected_analysts",
                                             ["market", "social", "news", "fundamentals"])
             exec_plan = build_analyst_execution_plan(selected_keys)
-            wall_tracker = AnalystWallTimeTracker(exec_plan)
+            stage_timer = StageTimer()
+            perf_handler = PerfCallbacks() if args.perf else None
+            if perf_handler:
+                config["callbacks"] = [perf_handler]
 
         # ---- 流式执行 ----
         console.print(Panel("开始分析...", border_style="cyan"))
@@ -114,18 +117,18 @@ def main():
         for chunk in graph.graph.stream(init_state, **flow_args):
             step += 1
             trace.append(chunk)
-            sync_analyst_tracker_from_chunk(wall_tracker, chunk)
-
-            # 提取本轮活跃节点
+            # extract active node from chunk
             active = [k for k in chunk if k != "messages"]
             if active:
+                stage_timer.tick(active)
                 elapsed = time.time() - start_time
-                console.print(f"  [dim][{int(elapsed)}s][/dim] 步骤{step}: "
-                              f"[cyan]{' → '.join(active)}[/cyan]")
+                console.print(f"  [dim][{int(elapsed)}s][/dim] Step{step}: "
+                              f"[cyan]{' -> '.join(active)}[/cyan]")
 
+        stage_timer.finalize()
         elapsed = time.time() - start_time
 
-        # 合并增量状态
+        # merge incremental state
         final_state = {}
         for c in trace:
             final_state.update(c)
@@ -135,6 +138,8 @@ def main():
 
         # ---- 结果摘要 ----
         table = Table(title="分析结果", border_style="green")
+
+
         table.add_column("阶段", style="cyan")
         table.add_column("结论", style="bold")
         table.add_column("耗时", style="dim")
@@ -163,8 +168,21 @@ def main():
                 safe[k] = str(v)[:2000]
         json_path.write_text(json.dumps(safe, ensure_ascii=False, indent=2), encoding="utf-8")
 
+
+        # 耗时数据
+        timing_path = report_dir / "耗时分析.json"
+        timing_path.write_text(json.dumps(stage_timer.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+
         # 分析师耗时统计
-        console.print(f"\n[dim]{wall_tracker.format_summary()}[/dim]")
+        stage_timer.print_report(console)
+
+        # 深度耗时追踪（--perf 模式）
+        if perf_handler:
+            console.print()
+            perf_handler.print_report(console)
+            perf_path = report_dir / "耗时明细.json"
+            perf_path.write_text(json.dumps(perf_handler.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            console.print(f"[dim]耗时明细已保存: {perf_path}[/dim]")
 
         # 精简结果输出
         if config.get("output_language", "").lower() in ("chinese", "中文"):
@@ -204,3 +222,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

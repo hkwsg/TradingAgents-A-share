@@ -47,10 +47,31 @@ A 股 + 港股双市场 AI 投资分析系统。基于 LangGraph 多 Agent 辩�
 - `.watchlist.json` — 结构：`{"人名": ["代码1", "代码2"]}`（gitignore）
 - 用户说「我的股票」→ 读此文件识别列表
 
+## 性能监控
+
+运行分析时可加 `--perf` 启用深度耗时追踪：
+
+```bash
+# 基础计时（默认，报告目录输出 耗时分析.json）
+PYMINIRACER_V8_SINGLE_THREAD=1 PYMINIRACER_DISABLE_CONFIGURE_POOL=1 .venv/Scripts/python.exe run_single.py 000012
+
+# 深度追踪（拆分 LLM 推理 vs 工具调用耗时，额外输出 耗时明细.json）
+PYMINIRACER_V8_SINGLE_THREAD=1 PYMINIRACER_DISABLE_CONFIGURE_POOL=1 .venv/Scripts/python.exe run_single.py 000012 --perf
+```
+
+输出文件：
+- `耗时分析.json` — 各阶段/节点墙钟时间，带轮次编号（默认就有）
+- `耗时明细.json` — LLM 推理 vs 工具调用逐调用拆解（加 `--perf` 才有）
+
+详见 `tradingagents/graph/stage_timer.py`（基础计时器）和 `tradingagents/graph/perf_callbacks.py`（深度回调追踪）。
+
 ## 报告输出
 - `reports/<代码>_<日期>/` 目录（gitignore）
 - 包含：`完整分析报告.md` + `原始数据.json`
 - 单次分析：约 10-15 分钟，约 50-100 万 input tokens
+
+## 专项文档
+- [LESSONS.md](LESSONS.md) — 踩坑记录、故障排查、环境速查
 
 ## 常见问题
 - **py_mini_racer 崩溃**：Windows 上 akshare 的 V8 引擎与多进程不兼容 → 必须用上面的环境变量
