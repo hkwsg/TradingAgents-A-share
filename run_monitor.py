@@ -184,6 +184,18 @@ def main():
         perf_path.write_text(json.dumps(perf_handler.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         console.print(f"[dim]耗时明细已保存: {perf_path}[/dim]")
 
+        # total token summary
+        total_prompt = sum(n.prompt_tokens_total for n in perf_handler.get_nodes())
+        total_completion = sum(n.completion_tokens_total for n in perf_handler.get_nodes())
+        total_tok = total_prompt + total_completion
+
+        def _fmt(n):
+            if n >= 1000:
+                return f"{n/1000:.1f}k"
+            return str(n)
+
+        console.print(f"\n[bold yellow]  Token 总消耗: 输入 {_fmt(total_prompt)} + 输出 {_fmt(total_completion)} = {_fmt(total_tok)}[/bold yellow]")
+
     # ---- 精简结果 ---- #
     if config.get("output_language", "").lower() in ("chinese", ""):
         from cli.report_formatter import format_condensed_result

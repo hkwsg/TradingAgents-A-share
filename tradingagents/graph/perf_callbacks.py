@@ -15,11 +15,19 @@ def _safe_serialize(value):
         return str(value)[:500]
 
 
+def _fmt_tokens(n: int) -> str:
+    if n >= 1000:
+        return f"{n/1000:.1f}k"
+    return str(n)
+
+
 @dataclass
 class TimeSpan:
     kind: str
     start: float
     end: Optional[float] = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -27,6 +35,10 @@ class TimeSpan:
         if self.end is None:
             return 0.0
         return max(0.0, self.end - self.start)
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
 
 
 @dataclass
@@ -47,6 +59,18 @@ class NodeBreakdown:
     @property
     def total(self) -> float:
         return self.llm_total + self.tool_total
+
+    @property
+    def prompt_tokens_total(self) -> int:
+        return sum(s.prompt_tokens for s in self.llm_calls)
+
+    @property
+    def completion_tokens_total(self) -> int:
+        return sum(s.completion_tokens for s in self.llm_calls)
+
+    @property
+    def tokens_total(self) -> int:
+        return self.prompt_tokens_total + self.completion_tokens_total
 
 
 class PerfCallbacks(BaseCallbackHandler):
@@ -75,6 +99,12 @@ class PerfCallbacks(BaseCallbackHandler):
                    parent_run_id=None, **kwargs):
         if self._current_llm is not None:
             self._current_llm.end = monotonic()
+            # extract token usage from LLM response
+            token_usage = {}
+            if hasattr(response, "llm_output") and response.llm_output:
+                token_usage = response.llm_output.get("token_usage", {})
+            self._current_llm.prompt_tokens = token_usage.get("prompt_tokens", 0) or 0
+            self._current_llm.completion_tokens = token_usage.get("completion_tokens", 0) or 0
             if self._current_node:
                 node = self._ensure_node(self._current_node)
                 node.llm_calls.append(self._current_llm)
@@ -123,6 +153,8 @@ class PerfCallbacks(BaseCallbackHandler):
         nodes_data = []
         for node in self.get_nodes():
             llm_detail = [{"duration_s": round(s.duration, 2),
+                          "prompt_tokens": s.prompt_tokens,
+                          "completion_tokens": s.completion_tokens,
                           "metadata": {k: _safe_serialize(v)
                                       for k, v in s.metadata.items()}}
                          for s in node.llm_calls]
@@ -136,15 +168,23 @@ class PerfCallbacks(BaseCallbackHandler):
                 "llm_total_s": round(node.llm_total, 1),
                 "tool_total_s": round(node.tool_total, 1),
                 "total_s": round(node.total, 1),
+                "prompt_tokens": node.prompt_tokens_total,
+                "completion_tokens": node.completion_tokens_total,
+                "total_tokens": node.tokens_total,
                 "llm_calls": llm_detail,
                 "tool_calls": tool_detail,
             })
         total_llm = sum(n.llm_total for n in self.get_nodes())
         total_tool = sum(n.tool_total for n in self.get_nodes())
+        all_prompt = sum(n.prompt_tokens_total for n in self.get_nodes())
+        all_completion = sum(n.completion_tokens_total for n in self.get_nodes())
         return {
             "total_llm_s": round(total_llm, 1),
             "total_tool_s": round(total_tool, 1),
             "total_s": round(total_llm + total_tool, 1),
+            "total_prompt_tokens": all_prompt,
+            "total_completion_tokens": all_completion,
+            "total_tokens": all_prompt + all_completion,
             "nodes": nodes_data,
         }
 
@@ -153,25 +193,39 @@ class PerfCallbacks(BaseCallbackHandler):
         from rich.console import Console
         if console is None:
             console = Console()
-        table = Table(title="LLM vs 工具调用耗时分解", border_style="dim magenta",
+        table = Table(title="LLM vs 工具调用耗时 + Token 分解", border_style="dim magenta",
                       show_header=True, header_style="bold white")
         table.add_column("节点", style="cyan", no_wrap=True)
         table.add_column("轮", justify="center", style="dim")
-        table.add_column("LLM推理", justify="right", style="green")
-        table.add_column("工具调用", justify="right", style="yellow")
-        table.add_column("合计", justify="right", style="bold white")
+        table.add_column("LLM", justify="right", style="green")
+        table.add_column("工具", justify="right", style="yellow")
+        table.add_column("输入Token", justify="right", style="blue")
+        table.add_column("输出Token", justify="right", style="magenta")
+        table.add_column("合计Token", justify="right", style="bold white")
 
         total_llm = 0.0
         total_tool = 0.0
+        total_prompt = 0
+        total_completion = 0
         for node in self.get_nodes():
-            table.add_row(node.node_name, str(node.round_num),
-                          f"{node.llm_total:.0f}s", f"{node.tool_total:.0f}s",
-                          f"{node.total:.0f}s")
+            table.add_row(
+                node.node_name, str(node.round_num),
+                f"{node.llm_total:.0f}s", f"{node.tool_total:.0f}s",
+                _fmt_tokens(node.prompt_tokens_total),
+                _fmt_tokens(node.completion_tokens_total),
+                _fmt_tokens(node.tokens_total),
+            )
             total_llm += node.llm_total
             total_tool += node.tool_total
+            total_prompt += node.prompt_tokens_total
+            total_completion += node.completion_tokens_total
 
-        table.add_row("总计", "", f"{total_llm:.0f}s", f"{total_tool:.0f}s",
-                      f"{total_llm + total_tool:.0f}s", style="bold white")
+        table.add_row("总计", "",
+                      f"{total_llm:.0f}s", f"{total_tool:.0f}s",
+                      _fmt_tokens(total_prompt),
+                      _fmt_tokens(total_completion),
+                      _fmt_tokens(total_prompt + total_completion),
+                      style="bold white")
         return table
 
     def print_report(self, console=None):
