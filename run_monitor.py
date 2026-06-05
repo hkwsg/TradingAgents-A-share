@@ -59,7 +59,7 @@ def main():
     args = parser.parse_args()
 
     ticker = args.ticker
-    trade_date = args.date or get_previous_trade_date()
+    trade_date = args.date or get_previous_trade_date(date.today().isoformat())
 
     # ---- 加载配置 ---- #
     config = DEFAULT_CONFIG.copy()
@@ -68,49 +68,36 @@ def main():
         "quick_think_llm": os.getenv("TRADINGAGENTS_QUICK_LLM"),
         "backend_url": os.getenv("TRADINGAGENTS_BACKEND_URL"),
         "llm_provider": os.getenv("TRADINGAGENTS_LLM_PROVIDER"),
-        "max_debate_rounds": os.getenv("TRADINGAGENTS_MAX_DEBATE_ROUNDS"),
-        "max_risk_discuss_rounds": os.getenv("TRADINGAGENTS_MAX_RISK_ROUNDS"),
+        "max_debate_rounds": int(os.getenv("TRADINGAGENTS_MAX_DEBATE_ROUNDS")) if os.getenv("TRADINGAGENTS_MAX_DEBATE_ROUNDS") else None,
+        "max_risk_discuss_rounds": int(os.getenv("TRADINGAGENTS_MAX_RISK_ROUNDS")) if os.getenv("TRADINGAGENTS_MAX_RISK_ROUNDS") else None,
         "output_language": os.getenv("TRADINGAGENTS_OUTPUT_LANGUAGE"),
         "temperature": os.getenv("TRADINGAGENTS_TEMPERATURE"),
     }
     for k, v in env_overrides.items():
-        if v is not None:
+        if v is not None and v != "":
             config[k] = v
     if args.debate is not None:
-        config["max_debate_rounds"] = args.debate
+        config["max_debate_rounds"] = int(args.debate)
 
     selected_analysts = args.analysts if args.analysts else ["market", "social", "news", "fundamentals"]
     debug = os.getenv("TRADINGAGENTS_DEBUG", "").lower() in ("1", "true", "yes")
 
     # ---- 构建 Graph ---- #
     console.print(Panel(f"正在初始化 {ticker} {trade_date}...", border_style="cyan"))
-    graph = TradingAgentsGraph(
-        selected_analysts=selected_analysts,
-        debug=debug,
-        config=config,
-    )
+        # perf handler must be created BEFORE graph so callbacks are wired into LLMs
+    perf_handler = PerfCallbacks() if args.perf else None
+    callbacks = [perf_handler] if perf_handler else None
 
-    asset_type = "stock"
-    company_name = graph.propagator.resolve_company_name(ticker, trade_date)
-    instrument_context = graph.resolve_instrument_context(company_name, asset_type)
-    past_context = graph.memory_log.get_past_context(company_name)
+    graph = TradingAgentsGraph(debug=debug, config=config, callbacks=callbacks)
 
+    instrument_context = graph.resolve_instrument_context(ticker)
     init_state = graph.propagator.create_initial_state(
-        company_name, trade_date,
-        asset_type=asset_type,
-        past_context=past_context,
-        instrument_context=instrument_context,
+        ticker, trade_date, instrument_context=instrument_context,
     )
     flow_args = graph.propagator.get_graph_args()
 
     # ---- 初始化计时器（外挂层）---- #
     stage_timer = StageTimer()
-    perf_handler = PerfCallbacks() if args.perf else None
-    if perf_handler:
-        if "callbacks" not in flow_args.get("config", {}):
-            flow_args.setdefault("config", {})["callbacks"] = []
-        # PerfCallbacks 将通过 config["callbacks"] 自动注入到 LLM 构造中
-        pass
 
     # ---- 流式执行 + 计时 ---- #
     console.print(Panel("开始分析...", border_style="cyan"))
@@ -118,7 +105,7 @@ def main():
     step = 0
     trace = []
 
-    for chunk in graph.graph.stream(init_state, **flow_args):
+    for chunk in graph.graph.stream(init_state, stream_mode="updates", **flow_args):
         step += 1
         trace.append(chunk)
 
