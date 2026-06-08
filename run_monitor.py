@@ -37,6 +37,10 @@ from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.dataflows.a_share_common import get_previous_trade_date
 from tradingagents.graph.analyst_execution import build_analyst_execution_plan
+from tradingagents.graph.monitoring import (
+    active_nodes_from_update_chunk,
+    merge_stream_updates,
+)
 from tradingagents.graph.stage_timer import StageTimer
 from tradingagents.graph.perf_callbacks import PerfCallbacks
 from cli.main import save_report_to_disk
@@ -94,7 +98,10 @@ def main():
     init_state = graph.propagator.create_initial_state(
         ticker, trade_date, instrument_context=instrument_context,
     )
-    flow_args = graph.propagator.get_graph_args()
+    flow_args = graph.propagator.get_graph_args(
+        callbacks=callbacks,
+        stream_mode="updates",
+    )
 
     # ---- 初始化计时器（外挂层）---- #
     stage_timer = StageTimer()
@@ -105,11 +112,11 @@ def main():
     step = 0
     trace = []
 
-    for chunk in graph.graph.stream(init_state, stream_mode="updates", **flow_args):
+    for chunk in graph.graph.stream(init_state, **flow_args):
         step += 1
         trace.append(chunk)
 
-        active = [k for k in chunk if k != "messages"]
+        active = active_nodes_from_update_chunk(chunk)
         if active:
             stage_timer.tick(active)
             elapsed = time.time() - start_time
@@ -120,9 +127,7 @@ def main():
     elapsed = time.time() - start_time
 
     # ---- 合并状态 ---- #
-    final_state = {}
-    for c in trace:
-        final_state.update(c)
+    final_state = merge_stream_updates(trace)
 
     decision = final_state.get("final_trade_decision", "")
     signal = graph.process_signal(decision)

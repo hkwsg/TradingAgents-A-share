@@ -68,17 +68,23 @@ class Propagator:
             "news_report": "",
         }
 
-    def get_graph_args(self, callbacks: Optional[List] = None) -> Dict[str, Any]:
+    def get_graph_args(
+        self,
+        callbacks: Optional[List] = None,
+        stream_mode: str = "values",
+    ) -> Dict[str, Any]:
         """Get arguments for the graph invocation.
 
         Args:
             callbacks: Optional list of callback handlers for tool execution tracking.
                        Note: LLM callbacks are handled separately via LLM constructor.
+            stream_mode: LangGraph stream mode. Use ``"updates"`` when callers
+                         need per-node update chunks for monitoring.
         """
         config = {"recursion_limit": self.max_recur_limit}
         if callbacks:
             config["callbacks"] = callbacks
         return {
-            "stream_mode": "values",
+            "stream_mode": stream_mode,
             "config": config,
         }

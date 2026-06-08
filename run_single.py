@@ -42,6 +42,12 @@ from tradingagents.graph.analyst_execution import (
     build_analyst_execution_plan,
     sync_analyst_tracker_from_chunk,
 )
+from tradingagents.graph.monitoring import (
+    active_nodes_from_update_chunk,
+    merge_stream_updates,
+)
+from tradingagents.graph.perf_callbacks import PerfCallbacks
+from tradingagents.graph.stage_timer import StageTimer
 from cli.main import save_report_to_disk  # 复用 CLI 的目录化报告保存
 
 
@@ -57,6 +63,8 @@ def main():
     parser.add_argument("--analysts", nargs="+",
                         choices=["market", "social", "news", "fundamentals"],
                         help="选择分析师，默认全部四个")
+    parser.add_argument("--perf", action="store_true",
+                        help="启用深度耗时追踪（LLM vs 工具调用拆分）")
     parser.add_argument("--no-push", action="store_true",
                         help="禁用飞书推送")
     args = parser.parse_args()
@@ -89,12 +97,17 @@ def main():
     try:
         # ---- 初始化 ----
         with console.status("[bold green]初始化分析引擎...[/bold green]"):
-            graph = TradingAgentsGraph(debug=False, config=config)
+            perf_handler = PerfCallbacks() if args.perf else None
+            callbacks = [perf_handler] if perf_handler else None
+            graph = TradingAgentsGraph(debug=False, config=config, callbacks=callbacks)
             instrument_context = graph.resolve_instrument_context(ticker)
             init_state = graph.propagator.create_initial_state(
                 ticker, trade_date, instrument_context=instrument_context,
             )
-            flow_args = graph.propagator.get_graph_args()
+            flow_args = graph.propagator.get_graph_args(
+                callbacks=callbacks,
+                stream_mode="updates",
+            )
 
             # 分析师执行计划
             selected_keys = [a for a in ["market", "social", "news", "fundamentals"]
@@ -104,6 +117,7 @@ def main():
                                             ["market", "social", "news", "fundamentals"])
             exec_plan = build_analyst_execution_plan(selected_keys)
             wall_tracker = AnalystWallTimeTracker(exec_plan)
+            stage_timer = StageTimer()
 
         # ---- 流式执行 ----
         console.print(Panel("开始分析...", border_style="cyan"))
@@ -114,21 +128,22 @@ def main():
         for chunk in graph.graph.stream(init_state, **flow_args):
             step += 1
             trace.append(chunk)
-            sync_analyst_tracker_from_chunk(wall_tracker, chunk)
+            chunk_state = merge_stream_updates([chunk])
+            sync_analyst_tracker_from_chunk(wall_tracker, chunk_state)
 
             # 提取本轮活跃节点
-            active = [k for k in chunk if k != "messages"]
+            active = active_nodes_from_update_chunk(chunk)
             if active:
+                stage_timer.tick(active)
                 elapsed = time.time() - start_time
                 console.print(f"  [dim][{int(elapsed)}s][/dim] 步骤{step}: "
                               f"[cyan]{' → '.join(active)}[/cyan]")
 
+        stage_timer.finalize()
         elapsed = time.time() - start_time
 
         # 合并增量状态
-        final_state = {}
-        for c in trace:
-            final_state.update(c)
+        final_state = merge_stream_updates(trace)
 
         decision = final_state.get("final_trade_decision", "")
         signal = graph.process_signal(decision)
@@ -163,8 +178,21 @@ def main():
                 safe[k] = str(v)[:2000]
         json_path.write_text(json.dumps(safe, ensure_ascii=False, indent=2), encoding="utf-8")
 
+        # 基础阶段耗时统计
+        timing_path = report_dir / "耗时分析.json"
+        timing_path.write_text(json.dumps(stage_timer.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[dim]耗时分析已保存: {timing_path}[/dim]")
+
+        if perf_handler:
+            perf_path = report_dir / "耗时明细.json"
+            perf_path.write_text(json.dumps(perf_handler.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+            console.print(f"[dim]耗时明细已保存: {perf_path}[/dim]")
+
         # 分析师耗时统计
         console.print(f"\n[dim]{wall_tracker.format_summary()}[/dim]")
+        stage_timer.print_report(console)
+        if perf_handler:
+            perf_handler.print_report(console)
 
         # 精简结果输出
         if config.get("output_language", "").lower() in ("chinese", "中文"):

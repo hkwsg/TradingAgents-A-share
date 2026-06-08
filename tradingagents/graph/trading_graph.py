@@ -362,7 +362,7 @@ class TradingAgentsGraph:
             past_context=past_context,
             instrument_context=instrument_context,
         )
-        args = self.propagator.get_graph_args()
+        args = self.propagator.get_graph_args(callbacks=self.callbacks)
 
         # Inject thread_id so same ticker+date resumes, different date starts fresh.
         if self.config.get("checkpoint_enabled"):

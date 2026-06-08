@@ -79,8 +79,9 @@ class PerfCallbacks(BaseCallbackHandler):
         super().__init__()
         self._nodes: Dict[str, NodeBreakdown] = {}
         self._rounds: Dict[str, int] = defaultdict(int)
-        self._current_llm: Optional[TimeSpan] = None
-        self._current_tool: Optional[TimeSpan] = None
+        self._llm_spans: Dict[str, TimeSpan] = {}
+        self._tool_spans: Dict[str, TimeSpan] = {}
+        self._run_nodes: Dict[str, str] = {}
         self._current_node: Optional[str] = None
 
     def _ensure_node(self, name: str) -> NodeBreakdown:
@@ -90,53 +91,88 @@ class PerfCallbacks(BaseCallbackHandler):
                 node_name=name, round_num=self._rounds[name])
         return self._nodes[name]
 
+    def _node_from_context(self, serialized=None, tags=None, metadata=None) -> Optional[str]:
+        metadata = metadata or {}
+        tags = tags or []
+        node = metadata.get("langgraph_node") or metadata.get("node")
+        if node:
+            return str(node)
+        for tag in tags:
+            if isinstance(tag, str) and tag.startswith("langgraph_node:"):
+                return tag.split(":", 1)[1]
+        if serialized:
+            name = serialized.get("name")
+            if name:
+                return str(name)
+        return self._current_node
+
     def on_llm_start(self, serialized, prompts, *, run_id=None,
                      parent_run_id=None, tags=None, metadata=None, **kwargs):
-        self._current_llm = TimeSpan(kind="llm", start=monotonic(),
-                                     metadata={"run_id": str(run_id)})
+        key = str(run_id)
+        node_name = self._node_from_context(serialized, tags, metadata)
+        if node_name:
+            self._run_nodes[key] = node_name
+        self._llm_spans[key] = TimeSpan(
+            kind="llm",
+            start=monotonic(),
+            metadata={"run_id": key},
+        )
 
     def on_llm_end(self, response, *, run_id=None,
                    parent_run_id=None, **kwargs):
-        if self._current_llm is not None:
-            self._current_llm.end = monotonic()
+        key = str(run_id)
+        span = self._llm_spans.pop(key, None)
+        if span is not None:
+            span.end = monotonic()
             # extract token usage from LLM response
             token_usage = {}
             if hasattr(response, "llm_output") and response.llm_output:
                 token_usage = response.llm_output.get("token_usage", {})
-            self._current_llm.prompt_tokens = token_usage.get("prompt_tokens", 0) or 0
-            self._current_llm.completion_tokens = token_usage.get("completion_tokens", 0) or 0
-            if self._current_node:
-                node = self._ensure_node(self._current_node)
-                node.llm_calls.append(self._current_llm)
-            self._current_llm = None
+            span.prompt_tokens = token_usage.get("prompt_tokens", 0) or 0
+            span.completion_tokens = token_usage.get("completion_tokens", 0) or 0
+            node_name = self._run_nodes.pop(key, None) or self._current_node
+            if node_name:
+                node = self._ensure_node(node_name)
+                node.llm_calls.append(span)
 
     def on_llm_error(self, error, *, run_id=None,
                      parent_run_id=None, **kwargs):
-        if self._current_llm is not None:
-            self._current_llm.end = monotonic()
-            self._current_llm = None
+        key = str(run_id)
+        span = self._llm_spans.pop(key, None)
+        if span is not None:
+            span.end = monotonic()
+        self._run_nodes.pop(key, None)
 
     def on_tool_start(self, serialized, input_str, *, run_id=None,
                       parent_run_id=None, tags=None, metadata=None, **kwargs):
-        self._current_tool = TimeSpan(
+        serialized = serialized or {}
+        key = str(run_id)
+        node_name = self._node_from_context(serialized, tags, metadata)
+        if node_name:
+            self._run_nodes[key] = node_name
+        self._tool_spans[key] = TimeSpan(
             kind="tool", start=monotonic(),
-            metadata={"run_id": str(run_id),
+            metadata={"run_id": key,
                       "tool": serialized.get("name", "unknown")})
 
     def on_tool_end(self, output, *, run_id=None,
                     parent_run_id=None, **kwargs):
-        if self._current_tool is not None:
-            self._current_tool.end = monotonic()
-            if self._current_node:
-                node = self._ensure_node(self._current_node)
-                node.tool_calls.append(self._current_tool)
-            self._current_tool = None
+        key = str(run_id)
+        span = self._tool_spans.pop(key, None)
+        if span is not None:
+            span.end = monotonic()
+            node_name = self._run_nodes.pop(key, None) or self._current_node
+            if node_name:
+                node = self._ensure_node(node_name)
+                node.tool_calls.append(span)
 
     def on_tool_error(self, error, *, run_id=None,
                       parent_run_id=None, **kwargs):
-        if self._current_tool is not None:
-            self._current_tool.end = monotonic()
-            self._current_tool = None
+        key = str(run_id)
+        span = self._tool_spans.pop(key, None)
+        if span is not None:
+            span.end = monotonic()
+        self._run_nodes.pop(key, None)
 
     def on_chain_start(self, serialized, inputs, *, run_id=None,
                        parent_run_id=None, tags=None, metadata=None, **kwargs):
