@@ -51,8 +51,10 @@ CronCreate("30 15 * * 1-5", "切换到 TradingAgents-A-share 项目。扫描今�
 ## 离线兜底
 使用 Windows 计划任务 + `scheduled_run.sh`：
 ```bash
-schtasks /create /tn "TradingAgentsDaily" /tr "bash /c/Users/86155/Desktop/claude项目文件/TradingAgents-A-share/scheduled_run.sh" /sc daily /st 09:10
+schtasks /create /tn "TradingAgentsDaily" /tr "bash <项目路径>/scheduled_run.sh" /sc daily /st 09:10
 ```
+
+将 `<项目路径>` 替换为本机 `TradingAgents-A-share` 仓库的实际绝对路径。
 
 ## 项目记忆
 - `~/.claude/projects/.../memory/tradingagents-project-setup.md` — 上次会话的状态快照
