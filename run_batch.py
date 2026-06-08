@@ -8,8 +8,13 @@
     py run_batch.py --tickers 600519,600036   # 直接指定代码列表
     py run_batch.py --parallel       # 并发模式（每只间隔10秒启动）
     py run_batch.py --serial         # 串行模式（默认，最安全）
+    py run_batch.py --summary-only --summary-date 2026-06-05 --tickers 600036,601899
+
+日报归类规则:
+    批量汇总按报告分析使用的交易日归类，优先读取 原始数据.json 里的 trade_date。
+    跨午夜完成的报告仍归入该交易日；文件修改时间只代表落盘时间，不参与归类。
 """
-import os, sys, io, json, time, argparse, subprocess
+import os, sys, io, json, time, argparse, subprocess, re
 from datetime import date
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -34,6 +39,91 @@ def load_watchlist():
 def is_hk(ticker):
     """判断是否港股代码（含.HK后缀）"""
     return ".HK" in ticker.upper()
+
+
+def report_ticker_from_dir(report_dir):
+    """从报告目录名提取股票代码。"""
+    match = re.match(r"^(.+)_\d{4}-\d{2}-\d{2}$", report_dir.name)
+    return match.group(1) if match else None
+
+
+def report_trade_date(report_dir):
+    """返回报告所属交易日，优先以原始数据中的 trade_date 为准。
+
+    跨午夜完成的报告仍归入分析使用的交易日；目录修改时间只代表落盘时间，
+    不能作为日报归类依据。
+    """
+    raw_path = report_dir / "原始数据.json"
+    if raw_path.exists():
+        try:
+            with open(raw_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            trade_date = raw.get("trade_date")
+            if isinstance(trade_date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", trade_date):
+                return trade_date
+        except Exception:
+            pass
+
+    match = re.search(r"_(\d{4}-\d{2}-\d{2})$", report_dir.name)
+    return match.group(1) if match else None
+
+
+def find_report_dir(ticker, analysis_date):
+    """按分析交易日查找某只股票的报告目录，不使用文件修改时间。"""
+    report_root = PROJ / "reports"
+    if not report_root.exists():
+        return None
+
+    candidates = [
+        d for d in report_root.iterdir()
+        if d.is_dir()
+        and report_ticker_from_dir(d) == ticker
+        and report_trade_date(d) == analysis_date
+    ]
+    return sorted(candidates, key=lambda d: d.name, reverse=True)[0] if candidates else None
+
+
+def collect_reports_by_trade_date(analysis_date, tickers=None):
+    """扫描 reports/，按分析交易日收集报告目录。"""
+    report_root = PROJ / "reports"
+    if not report_root.exists():
+        return []
+
+    ticker_filter = set(tickers) if tickers else None
+    reports = []
+    for report_dir in report_root.iterdir():
+        if not report_dir.is_dir():
+            continue
+        ticker = report_ticker_from_dir(report_dir)
+        if not ticker:
+            continue
+        if ticker_filter is not None and ticker not in ticker_filter:
+            continue
+        if report_trade_date(report_dir) == analysis_date:
+            reports.append((ticker, report_dir))
+
+    order = {ticker: i for i, ticker in enumerate(tickers or [])}
+    return sorted(reports, key=lambda item: (order.get(item[0], 10_000), item[0], item[1].name))
+
+
+def infer_summary_date(tickers):
+    """从指定股票的已生成报告中推断本轮批量汇总交易日。"""
+    dates = []
+    report_root = PROJ / "reports"
+    if not report_root.exists():
+        return date.today().isoformat()
+
+    for ticker in tickers:
+        for report_dir in report_root.iterdir():
+            if not report_dir.is_dir() or report_ticker_from_dir(report_dir) != ticker:
+                continue
+            trade_date = report_trade_date(report_dir)
+            if trade_date:
+                dates.append(trade_date)
+
+    if not dates:
+        return date.today().isoformat()
+    return max(set(dates), key=lambda d: (dates.count(d), d))
 
 
 def run_one(ticker, market_date=None, quiet=False):
@@ -75,15 +165,17 @@ def run_one(ticker, market_date=None, quiet=False):
         return False, elapsed
 
 
-def generate_summary(results, total_time):
+def generate_summary(results, total_time=None, analysis_date=None):
     """生成批量分析汇总简报"""
-    today = date.today().isoformat()
-    summary_path = PROJ / "reports" / f"批量分析_{today}.md"
+    if analysis_date is None:
+        analysis_date = infer_summary_date([ticker for ticker, _ok, _elapsed in results])
+    summary_path = PROJ / "reports" / f"批量分析_{analysis_date}.md"
+    total_time_text = "—" if total_time is None else f"{total_time/60:.1f} 分钟"
 
     lines = [
-        f"# 批量分析汇总 — {today}",
+        f"# 批量分析汇总 — {analysis_date}",
         "",
-        f"**总耗时**: {total_time/60:.1f} 分钟 | **总数**: {len(results)} 只",
+        f"**分析交易日**: {analysis_date} | **总耗时**: {total_time_text} | **总数**: {len(results)} 只",
         "",
         "| 代码 | 结果 | 耗时 | 报告路径 |",
         "|------|------|------|----------|",
@@ -92,12 +184,10 @@ def generate_summary(results, total_time):
     success = 0
     for ticker, ok, elapsed in results:
         status = "✅" if ok else "❌"
-        report_dir = PROJ / "reports"
-        # 查找最新的报告目录
-        dirs = sorted([d for d in report_dir.iterdir() if d.is_dir() and d.name.startswith(ticker)],
-                     key=lambda d: d.stat().st_mtime, reverse=True)
-        path = dirs[0].name if dirs else "—"
-        lines.append(f"| {ticker} | {status} | {elapsed/60:.1f}min | {path} |")
+        report_dir = find_report_dir(ticker, analysis_date)
+        path = report_dir.name if report_dir else "—"
+        elapsed_text = "—" if elapsed is None else f"{elapsed/60:.1f}min"
+        lines.append(f"| {ticker} | {status} | {elapsed_text} | {path} |")
         if ok:
             success += 1
 
@@ -122,12 +212,9 @@ def generate_summary(results, total_time):
             # 从报告目录读取信号
             signal = "—"
             try:
-                report_dirs = sorted(
-                    [d for d in (PROJ / "reports").iterdir() if d.name.startswith(ticker) and d.is_dir()],
-                    key=lambda d: d.stat().st_mtime, reverse=True
-                )
-                if report_dirs:
-                    json_path = report_dirs[0] / "原始数据.json"
+                report_dir = find_report_dir(ticker, analysis_date)
+                if report_dir:
+                    json_path = report_dir / "原始数据.json"
                     if json_path.exists():
                         import json
                         with open(json_path, 'r', encoding='utf-8') as f:
@@ -139,13 +226,26 @@ def generate_summary(results, total_time):
             push_results.append((ticker, {
                 "ok": ok,
                 "signal": signal,
-                "elapsed": f"{elapsed/60:.1f}min"
+                "elapsed": "—" if elapsed is None else f"{elapsed/60:.1f}min"
             }))
-        push_batch_summary(push_results, total_time)
+        if total_time is not None:
+            push_batch_summary(push_results, total_time)
     except Exception as e:
         print(f"[飞书推送失败] {e}")
 
     return summary_path
+
+
+def generate_summary_from_reports(analysis_date, tickers=None):
+    """基于现有 reports/ 目录生成指定交易日汇总。"""
+    reports = collect_reports_by_trade_date(analysis_date, tickers)
+    found = {ticker: report_dir for ticker, report_dir in reports}
+    target_tickers = tickers or [ticker for ticker, _report_dir in reports]
+
+    results = []
+    for ticker in target_tickers:
+        results.append((ticker, ticker in found, None))
+    return generate_summary(results, total_time=None, analysis_date=analysis_date)
 
 
 def main():
@@ -154,6 +254,10 @@ def main():
     parser.add_argument("--person", default="我", help="关注列表中的人物（默认'我'）")
     parser.add_argument("--tickers", help="直接指定代码列表，逗号分隔（如 600519,600036）")
     parser.add_argument("--date", default=None, help="交易日期 YYYY-MM-DD")
+    parser.add_argument("--summary-date", default=None,
+                        help="只生成/指定汇总的分析交易日 YYYY-MM-DD")
+    parser.add_argument("--summary-only", action="store_true", default=False,
+                        help="不运行分析，仅按分析交易日扫描 reports/ 生成汇总")
     parser.add_argument("--parallel", action="store_true", default=False,
                         help="并发模式：每只间隔10秒启动")
     parser.add_argument("--serial", action="store_true", default=False,
@@ -181,6 +285,13 @@ def main():
 
     if not tickers:
         print("⚠ 筛选后无股票可分析")
+        return
+
+    if args.summary_only:
+        if not args.summary_date:
+            print("⚠ --summary-only 需要指定 --summary-date YYYY-MM-DD")
+            return
+        generate_summary_from_reports(args.summary_date, tickers)
         return
 
     print(f"📊 批量分析启动 | {len(tickers)} 只股票 | 市场: {args.market or '全部'}")
@@ -216,7 +327,8 @@ def main():
     print(f"  批量分析完成！总耗时: {total/60:.1f} 分钟")
     print(f"{'='*60}")
 
-    generate_summary(results, total)
+    summary_date = args.summary_date or args.date or infer_summary_date([ticker for ticker, _ok, _elapsed in results])
+    generate_summary(results, total, analysis_date=summary_date)
 
 
 if __name__ == "__main__":
