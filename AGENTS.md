@@ -78,3 +78,30 @@ PYMINIRACER_V8_SINGLE_THREAD=1 PYMINIRACER_DISABLE_CONFIGURE_POOL=1 .venv/Script
 - **技术指标 N/A**：次新股数据不足，正常现象
 - **Structured output warning**：DeepSeek 偶尔返回 None，自动 fallback
 - **Reddit/StockTwits 404**：海外源对 A/港股无覆盖，忽略
+## 资料卡生成规范
+
+用户说「生成资料卡」或「出个卡片」时，按此规范从 `complete_report.md` 提取关键信息，生成精简版投资摘要。
+
+### 格式来源
+- 模板规范：`.codex/资料卡模板.md`（具体模块、语言风格、摘录技巧）
+- 完整范例：`reports/600276_2026-06-05/恒瑞医药_资料卡.md`
+
+### 核心原则
+- emoji 分区 + 分隔线 + 短句，不堆表格
+- 好坏两面并列，说人话，不写官腔
+- 入场信号具体到数字和K线形态
+- 止损线有明确价格和理由
+- 结尾必加组合经理原话（从报告裁决段落中找最有张力的一句）
+
+### 固定模块
+1. 头部指标条（日期/现价/跌幅/周期）
+2. 最终评级 + 一句话结论
+3. 好的一面（✅ 数据驱动）
+4. 坏的一面（🔻 逻辑驱动）
+5. 执行方案（按持仓状态分角色）
+6. 入场信号/加仓计划
+7. 止损线
+8. 组合经理原话
+
+### 评级配色
+- SELL/Underweight → 🔴 | HOLD/Neutral → 🟡 | BUY/Overweight → 🟢
