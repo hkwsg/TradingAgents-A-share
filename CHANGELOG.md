@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased] - 2026-06-08
+
+### Added
+
+- **Investment card generation** (`scripts/render_card_html.py`, `scripts/render_card_image.py`). Markdown→HTML→PNG pipeline for professional investment summary cards. Template at `.codex/资料卡模板.md`. Outputs HTML + auto-cropped PNG via headless Chrome/Edge.
+
+### Changed
+
+- **AGENTS.md** expanded with "资料卡生成规范" section (card generation workflow).
+- **LESSONS.md** updated with WeChat text card formatting guide and image card rendering reference.
+
 All notable changes to TradingAgents are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
