@@ -5,11 +5,22 @@
 ### Added
 
 - **Investment card generation** (`scripts/render_card_html.py`, `scripts/render_card_image.py`). Markdown→HTML→PNG pipeline for professional investment summary cards. Template at `.codex/资料卡模板.md`. Outputs HTML + auto-cropped PNG via headless Chrome/Edge.
+- Project handoff docs and agent rules for TradingAgents-A-share.
+- Feishu push orchestration and L1/L2 report formatting.
+- Batch analysis entrypoint and trade-date batch summary.
+- Performance monitoring instrumentation, including stage timing, callback-level tracing, and token usage summaries.
+- Investment card generation pipeline and pure-function tests.
 
 ### Changed
 
-- **AGENTS.md** expanded with "资料卡生成规范" section (card generation workflow).
-- **LESSONS.md** updated with WeChat text card formatting guide and image card rendering reference.
+- Report output paths now stay under project-local `reports/`.
+- Local/personal configuration is excluded from Git tracking.
+
+### Security / Governance
+
+- Removed hardcoded Feishu `open_id`; `FEISHU_OPEN_ID` must be provided through environment variables.
+- Removed `CLAUDE.local.md` from Git tracking and ignored it.
+- Kept `.env`, `.watchlist.json`, `.claude/`, and generated `reports/` out of version control.
 
 All notable changes to TradingAgents are documented here.
 

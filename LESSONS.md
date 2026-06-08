@@ -82,6 +82,8 @@ PYMINIRACER_V8_SINGLE_THREAD=1 PYMINIRACER_DISABLE_CONFIGURE_POOL=1 .venv/Script
 
 ## 🗂️ 关键路径速查
 
+> Windows 路径仅作为当前本机经验参考；跨机器使用时应改为本机实际安装路径或环境变量，不得写死到代码。
+
 | 什么 | 在哪 |
 |------|------|
 | 报告输出 | `reports/<代码>_<日期>/` |

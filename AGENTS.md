@@ -3,6 +3,15 @@
 ## 项目定位
 A 股 + 港股双市场 AI 投资分析系统。基于 LangGraph 多 Agent 辩论框架（12 个 Agent），A 股走 akshare 数据管道，港股走 yfinance 数据管道。
 
+## Agent 协作边界
+
+- Claude Code / Codex 协作时，优先读取 `AGENTS.md`，Claude Code 另读 `CLAUDE.md`。
+- 不得提交 `.env`、`.watchlist.json`、`CLAUDE.local.md`、`.claude/`、`reports/` 生成物。
+- 涉及飞书推送时，`FEISHU_OPEN_ID` 必须来自环境变量，不得写入代码、文档或示例。
+- 涉及 `main` 推送前，必须先做 `git diff origin/main..HEAD` 只读审计。
+- push 后建议由另一个 Agent 或 ChatGPT 直接读取 GitHub 远端 diff 做交叉确认。
+- 修改 `AGENTS.md` / `CLAUDE.md` / `.codex/` 文档时，必须检查是否混入本机路径、密钥、个人标识。
+
 ## 启动命令
 - **A股**：`.venv/Scripts/python.exe run_single.py <6位代码> [日期]`
 - **港股**：`.venv/Scripts/python.exe run_hk.py <代码.HK> [日期]`
